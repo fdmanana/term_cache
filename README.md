@@ -13,13 +13,13 @@ Each cache instance can be configured with the following parameters:
 
 # usage example
 
->    {ok, Cache} = term_cache:start_link([{name, foobar}, {size, 3}, {policy, lru}]),
->    ok = term_cache:put(Cache, key1, value1),
->    {ok, value1} = term_cache:get(Cache, key1),
->    ok = term_cache:put(Cache, <<"key_2">>, [1, 2, 3]),
->    {ok, [1, 2, 3]} = term_cache:get(Cache, <<"key_2">>),
->    ok = term_cache:put(Cache, {key, "3"}, {ok, 666}),
->    {ok, {ok, 666}} = term_cache:get(Cache, {key, "3"}),
->    ok = term_cache:put(Cache, "key4", "hello"),
->    {ok, "hello"} = term_cache:get(Cache, "key4"),
->    not_found = term_cache:get(Cache, key1),
+    {ok, Cache} = term_cache:start_link([{name, foobar}, {size, 3}, {policy, lru}]),
+    ok = term_cache:put(Cache, key1, value1),
+    {ok, value1} = term_cache:get(Cache, key1),
+    ok = term_cache:put(Cache, <<"key_2">>, [1, 2, 3]),
+    {ok, [1, 2, 3]} = term_cache:get(Cache, <<"key_2">>),
+    ok = term_cache:put(Cache, {key, "3"}, {ok, 666}),
+    {ok, {ok, 666}} = term_cache:get(Cache, {key, "3"}),
+    ok = term_cache:put(Cache, "key4", "hello"),
+    {ok, "hello"} = term_cache:get(Cache, "key4"),
+    not_found = term_cache:get(Cache, key1),
