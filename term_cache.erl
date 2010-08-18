@@ -186,7 +186,8 @@ value(Key, List, Default) ->
 run_tests() ->
     ok = test_simple_lru(),
     ok = test_simple_mru(),
-    ok = test_timed_lru().
+    ok = test_timed_lru(),
+    ok = test_timed_mru().
 
 test_simple_lru() ->
     {ok, Cache} = ?MODULE:start_link(
@@ -248,6 +249,28 @@ test_timed_lru() ->
     ok = ?MODULE:put(Cache, key5, value5),
     timer:sleep(1000),
     not_found = ?MODULE:get(Cache, key2),
+    {ok, value3} = ?MODULE:get(Cache, key3),
+    timer:sleep(3100),
+    not_found = ?MODULE:get(Cache, key3),
+    ok = ?MODULE:stop(Cache).
+
+test_timed_mru() ->
+    {ok, Cache} = ?MODULE:start_link(
+        [{name, timed_foobar}, {size, 3}, {policy, mru}, {ttl, 3000}]
+    ),
+    Cache = whereis(timed_foobar),
+    ok = ?MODULE:put(Cache, key1, value1),
+    timer:sleep(1000),
+    ok = ?MODULE:put(Cache, key2, value2),
+    ok = ?MODULE:put(Cache, key3, value3),
+    timer:sleep(2100),
+    not_found = ?MODULE:get(Cache, key1),
+    {ok, value2} = ?MODULE:get(Cache, key2),
+    {ok, value3} = ?MODULE:get(Cache, key3),
+    ok = ?MODULE:put(Cache, key4, value4),
+    ok = ?MODULE:put(Cache, key5, value5),
+    timer:sleep(1000),
+    not_found = ?MODULE:get(Cache, key4),
     {ok, value3} = ?MODULE:get(Cache, key3),
     timer:sleep(3100),
     not_found = ?MODULE:get(Cache, key3),
