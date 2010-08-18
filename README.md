@@ -8,7 +8,7 @@ Each cache instance can be configured with the following parameters:
 * {name, atom()} - name of the cache process
 * {size, int()} - maximum size (number of items)
 * {policy, lru | mru} - cache entry replacement policy
-* {timeout, int()} - the Time To Live (TTL) for cache entries. If an entry is not accessed within this time period, it will be purged from the cache.
+* {ttl, int()} - the Time To Live (TTL) for cache entries. If an entry is not accessed within this time period, it will be purged from the cache.
 
 
 # usage example

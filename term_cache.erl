@@ -233,7 +233,7 @@ test_simple_mru() ->
 
 test_timed_lru() ->
     {ok, Cache} = ?MODULE:start_link(
-        [{name, timed_foobar}, {size, 3}, {policy, lru}, {timeout, 3000}]
+        [{name, timed_foobar}, {size, 3}, {policy, lru}, {ttl, 3000}]
     ),
     Cache = whereis(timed_foobar),
     ok = ?MODULE:put(Cache, key1, value1),
