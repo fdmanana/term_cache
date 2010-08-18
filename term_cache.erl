@@ -26,7 +26,7 @@
     max_cache_size = 100,
     cache_size = 0,
     policy = lru,
-    timeout = 0,
+    timeout = 0,  % milliseconds
     items_ets,
     atimes_ets
 }).
@@ -48,7 +48,8 @@ put(Cache, Key, Item) ->
 
 %% @spec start_link(Options()) -> {ok, pid()}
 %% @type Options() -> [ Option() ]
-%% @type Option() -> {name, atom()} | {policy, Policy()} | {size, int()}
+%% @type Option() -> {name, atom()} | {policy, Policy()} | {size, int()} |
+%%                   {ttl, int()}
 %% @type Policy() -> lru | mru
 start_link(Options) ->
     Name = value(name, Options, ?MODULE),
@@ -64,7 +65,7 @@ init(Options) ->
     State = #state{
         policy = value(policy, Options, lru),
         max_cache_size = value(size, Options, 100),
-        timeout = value(timeout, Options, 0),  % 0 means no timeout
+        timeout = value(ttl, Options, 0),  % 0 means no timeout
         items_ets = ets:new(cache_by_items_ets, [set, private]),
         atimes_ets = ets:new(cache_by_atimes_ets, [ordered_set, private])
     },
@@ -78,9 +79,6 @@ handle_call({put, Key, Item}, _From, #state{timeout = Timeout} = State) ->
         items_ets = Items,
         atimes_ets = ATimes
     } = State,
-    % io:format("cache size ~p, max size ~p~n", [CacheSize, MaxSize]),
-    % io:format("Before put, items ets:  ~p~n", [ets:tab2list(Items)]),
-    % io:format("Before put, atimes ets:  ~p~n", [ets:tab2list(ATimes)]),
     case CacheSize >= MaxSize of
     true ->
         free_cache_entry(State);
@@ -91,14 +89,10 @@ handle_call({put, Key, Item}, _From, #state{timeout = Timeout} = State) ->
     Timer = set_timer(Key, Timeout),
     true = ets:insert(ATimes, {ATime, Key}),
     true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    % io:format("After put, items ets:  ~p~n", [ets:tab2list(Items)]),
-    % io:format("After put, atimes ets:  ~p~n", [ets:tab2list(ATimes)]),
     {reply, ok, State#state{cache_size = value(size, ets:info(Items))}};
 
 handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
     #state{items_ets = Items, atimes_ets = ATimes} = State,
-    % io:format("On get, items ets:  ~p~n", [ets:tab2list(Items)]),
-    % io:format("On get, atimes ets:  ~p~n", [ets:tab2list(ATimes)]),
     case ets:lookup(Items, Key) of
     [{Key, {Item, ATime, Timer}}] ->
         cancel_timer(Key, Timer),
