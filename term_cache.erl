@@ -45,7 +45,7 @@ get(Cache, Key) ->
 
 %% @spec put(Cache(), Key(), Item()) -> ok
 put(Cache, Key, Item) ->
-    ok = gen_server:call(Cache, {put, Key, Item}, infinity).
+    ok = gen_server:cast(Cache, {put, Key, Item}).
 
 
 %% @spec start_link(Options()) -> {ok, pid()}
@@ -74,7 +74,7 @@ init(Options) ->
     {ok, State}.
 
 
-handle_call({put, Key, Item}, _From, #state{timeout = Timeout} = State) ->
+handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     #state{
         cache_size = CacheSize,
         max_cache_size = MaxSize,
@@ -91,7 +91,8 @@ handle_call({put, Key, Item}, _From, #state{timeout = Timeout} = State) ->
     Timer = set_timer(Key, Timeout),
     true = ets:insert(ATimes, {ATime, Key}),
     true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    {reply, ok, State#state{cache_size = value(size, ets:info(Items))}};
+    {noreply, State#state{cache_size = value(size, ets:info(Items))}}.
+
 
 handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
     #state{items_ets = Items, atimes_ets = ATimes} = State,
@@ -110,10 +111,6 @@ handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
-
-
-handle_cast(_msg, State) ->
-    {noreply, State}.
 
 
 handle_info({expired, Key}, #state{cache_size = CacheSize} = State) ->
