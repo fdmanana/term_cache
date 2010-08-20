@@ -118,7 +118,7 @@ handle_info({expired, Key}, #state{cache_size = CacheSize} = State) ->
     [{Key, {_Item, ATime, _Timer}}] = ets:lookup(Items, Key),
     true = ets:delete(Items, Key),
     true = ets:delete(ATimes, ATime),
-    {noreply, State#state{cache_size = erlang:max(CacheSize - 1, 0)}}.
+    {noreply, State#state{cache_size = CacheSize - 1}}.
 
 
 terminate(_Reason, #state{items_ets = Items, atimes_ets = ATimes}) ->
