@@ -33,32 +33,32 @@
     atimes_ets
 }).
 
-%% @type Cache() -> pid | atom
-%% @type Key() -> term()
-%% @type Item() -> term()
+%% @type cache() = pid() | atom()
+%% @type key() = term()
+%% @type item() = term()
 
 
-%% @spec get(Cache(), Key()) -> {ok, Item()} | not_found
+%% @spec get(cache(), key()) -> {ok, item()} | not_found
 get(Cache, Key) ->
     gen_server:call(Cache, {get, Key}, infinity).
 
 
-%% @spec put(Cache(), Key(), Item()) -> ok
+%% @spec put(cache(), key(), item()) -> ok
 put(Cache, Key, Item) ->
     ok = gen_server:cast(Cache, {put, Key, Item}).
 
 
-%% @spec start_link(Options()) -> {ok, pid()}
-%% @type Options() -> [ Option() ]
-%% @type Option() -> {name, atom()} | {policy, Policy()} | {size, int()} |
+%% @spec start_link(options()) -> {ok, pid()}
+%% @type options() = [ option() ]
+%% @type option() = {name, atom()} | {policy, policy()} | {size, int()} |
 %%                   {ttl, int()}
-%% @type Policy() -> lru | mru
+%% @type policy() = lru | mru
 start_link(Options) ->
     Name = value(name, Options, ?MODULE),
     gen_server:start_link({local, Name}, ?MODULE, Options, []).
 
 
-%% @spec stop(Cache()) -> ok.
+%% @spec stop(cache()) -> ok
 stop(Cache) ->
     ok = gen_server:call(Cache, stop).
 
