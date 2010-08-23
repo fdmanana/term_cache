@@ -76,11 +76,18 @@ init(Options) ->
 
 handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     #state{
-        cache_size = CacheSize,
+        cache_size = CacheSize1,
         max_cache_size = MaxSize,
         items_ets = Items,
         atimes_ets = ATimes
     } = State,
+    CacheSize = case ets:lookup(Items, Key) of
+    [] ->
+        CacheSize1;
+    [{Key, {_OldItem, OldATime, _OldTimer}}] ->
+        free_cache_entry(fun() -> OldATime end, State),
+        CacheSize1 - 1
+    end,
     case CacheSize >= MaxSize of
     true ->
         free_cache_entry(State);
