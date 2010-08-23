@@ -76,29 +76,26 @@ init(Options) ->
 
 handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     #state{
-        cache_size = CacheSize1,
+        cache_size = CacheSize,
         max_cache_size = MaxSize,
         items_ets = Items,
         atimes_ets = ATimes
     } = State,
-    CacheSize = case ets:lookup(Items, Key) of
+    NewCacheSize = case ets:lookup(Items, Key) of
+    [{Key, {_OldItem, _OldATime, OldTimer}}] ->
+        cancel_timer(Key, OldTimer),
+        CacheSize;
+    [] when CacheSize >= MaxSize ->
+        free_cache_entry(State),
+        CacheSize;
     [] ->
-        CacheSize1;
-    [{Key, {_OldItem, OldATime, _OldTimer}}] ->
-        free_cache_entry(fun() -> OldATime end, State),
-        CacheSize1 - 1
-    end,
-    case CacheSize >= MaxSize of
-    true ->
-        free_cache_entry(State);
-    false ->
-        ok
+        CacheSize + 1
     end,
     ATime = erlang:now(),
     Timer = set_timer(Key, Timeout),
     true = ets:insert(ATimes, {ATime, Key}),
     true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    {noreply, State#state{cache_size = value(size, ets:info(Items))}}.
+    {noreply, State#state{cache_size = NewCacheSize}}.
 
 
 handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
@@ -174,9 +171,6 @@ cancel_timer(Key, Timer) ->
 
 
 % helper functions
-
-value(Key, List) ->
-    value(Key, List, undefined).
 
 value(Key, List, Default) ->
     case lists:keysearch(Key, 1, List) of
