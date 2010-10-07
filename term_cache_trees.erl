@@ -16,11 +16,11 @@
 % A simple, configurable and generic Erlang term cache.
 % Keys and values can be any Erlang term.
 %
-% This implementation uses 2 ets tables per cache.
-% NOTE: the maximum number of instantiated ets tables allowed by the Erlang VM
-%       is limited.
+% This implementation uses trees (from gb_trees module) instead of ets tables.
+% The reason for trees is that the maximum number of ets tables allowed by the
+% Erlang VM is limited.
 
--module(term_cache).
+-module(term_cache_trees).
 -behaviour(gen_server).
 
 % public API
@@ -35,11 +35,10 @@
 
 -record(state, {
     max_cache_size = 100,
-    cache_size = 0,
     policy = lru,
     timeout = 0,  % milliseconds
-    items_ets,
-    atimes_ets
+    items_tree,
+    atimes_tree
 }).
 
 %% @type cache() = pid() | atom()
@@ -82,58 +81,65 @@ init(Options) ->
         policy = value(policy, Options, lru),
         max_cache_size = value(size, Options, 100),
         timeout = value(ttl, Options, 0),  % 0 means no timeout
-        items_ets = ets:new(cache_by_items_ets, [set, private]),
-        atimes_ets = ets:new(cache_by_atimes_ets, [ordered_set, private])
+        items_tree = gb_trees:empty(),
+        atimes_tree = gb_trees:empty()
     },
     {ok, State}.
 
 
 handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     #state{
-        cache_size = CacheSize,
         max_cache_size = MaxSize,
-        items_ets = Items,
-        atimes_ets = ATimes
+        items_tree = Items,
+        atimes_tree = ATimes
     } = State,
-    NewCacheSize = case ets:lookup(Items, Key) of
-    [{Key, {_OldItem, _OldATime, OldTimer}}] ->
+    {Items2, ATimes2} = case gb_trees:lookup(Key, Items) of
+    {value, {_OldItem, _OldATime, OldTimer}} ->
         cancel_timer(Key, OldTimer),
-        CacheSize;
-    [] when CacheSize >= MaxSize ->
-        free_cache_entry(State),
-        CacheSize;
-    [] ->
-        CacheSize + 1
+        {gb_trees:delete(Key, Items), ATimes};
+    none ->
+        case gb_trees:size(Items) >= MaxSize of
+        true ->
+            free_cache_entry(State);
+        false ->
+            {Items, ATimes}
+        end
     end,
     ATime = erlang:now(),
     Timer = set_timer(Key, Timeout),
-    true = ets:insert(ATimes, {ATime, Key}),
-    true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    {noreply, State#state{cache_size = NewCacheSize}};
+    ATimes3 = gb_trees:insert(ATime, Key, ATimes2),
+    Items3 = gb_trees:insert(Key, {Item, ATime, Timer}, Items2),
+    {noreply, State#state{items_tree = Items3, atimes_tree = ATimes3}};
 
-handle_cast(flush, #state{items_ets = Items, atimes_ets = ATimes} = State) ->
-    ets:foldl(
+handle_cast(flush, #state{items_tree = Items} = State) ->
+    lists:foldl(
         fun({Key, {_Item, _ATime, Timer}}, _) -> cancel_timer(Key, Timer) end,
         ok,
-        Items
+        gb_trees:to_list(Items)
     ),
-    true = ets:delete_all_objects(Items),
-    true = ets:delete_all_objects(ATimes),
-    {noreply, State#state{cache_size = 0}}.
+    NewState = State#state{
+        items_tree = gb_trees:empty(),
+        atimes_tree = gb_trees:empty()
+    },
+    {noreply, NewState}.
 
 
 handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
-    #state{items_ets = Items, atimes_ets = ATimes} = State,
-    case ets:lookup(Items, Key) of
-    [{Key, {Item, ATime, Timer}}] ->
+    #state{items_tree = Items, atimes_tree = ATimes} = State,
+    case gb_trees:lookup(Key, Items) of
+    {value, {Item, ATime, Timer}} ->
         cancel_timer(Key, Timer),
         NewATime = erlang:now(),
-        true = ets:delete(ATimes, ATime),
-        true = ets:insert(ATimes, {NewATime, Key}),
+        ATimes2 = gb_trees:delete(ATime, ATimes),
+        ATimes3 = gb_trees:insert(NewATime, Key, ATimes2),
         NewTimer = set_timer(Key, Timeout),
-        true = ets:insert(Items, {Key, {Item, NewATime, NewTimer}}),
-        {reply, {ok, Item}, State};
-    [] ->
+        Items2 = gb_trees:update(Key, {Item, NewATime, NewTimer}, Items),
+        NewState = State#state{
+            items_tree = Items2,
+            atimes_tree = ATimes3
+        },
+        {reply, {ok, Item}, NewState};
+    none ->
         {reply, not_found, State}
     end;
 
@@ -141,39 +147,56 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 
-handle_info({expired, Key}, #state{cache_size = CacheSize} = State) ->
-    #state{items_ets = Items, atimes_ets = ATimes} = State,
-    [{Key, {_Item, ATime, _Timer}}] = ets:lookup(Items, Key),
-    true = ets:delete(Items, Key),
-    true = ets:delete(ATimes, ATime),
-    {noreply, State#state{cache_size = CacheSize - 1}}.
+handle_info({expired, Key}, State) ->
+    #state{items_tree = Items, atimes_tree = ATimes} = State,
+    {_Item, ATime, _Timer} = gb_trees:get(Key, Items),
+    Items2 = gb_trees:delete(Key, Items),
+    ATimes2 = gb_trees:delete(ATime, ATimes),
+    {noreply, State#state{items_tree = Items2, atimes_tree = ATimes2}}.
 
 
-terminate(_Reason, #state{items_ets = Items, atimes_ets = ATimes}) ->
-    true = ets:delete(Items),
-    true = ets:delete(ATimes).
+terminate(_Reason, _State) ->
+    ok.
 
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-free_cache_entry(#state{policy = lru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(fun() -> ets:first(ATimes) end, State);
+free_cache_entry(#state{policy = lru, atimes_tree = ATimes} = State) ->
+    free_cache_entry(
+        fun() ->
+            case gb_trees:is_empty(ATimes) of
+            true ->
+                none;
+            false ->
+                gb_trees:smallest(ATimes)
+            end
+        end,
+        State
+    );
 
-free_cache_entry(#state{policy = mru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(fun() -> ets:last(ATimes) end, State).
+free_cache_entry(#state{policy = mru, atimes_tree = ATimes} = State) ->
+    free_cache_entry(
+        fun() ->
+            case gb_trees:is_empty(ATimes) of
+            true ->
+                none;
+            false ->
+                gb_trees:largest(ATimes)
+            end
+        end,
+        State
+    ).
 
-free_cache_entry(ATimeFun, #state{items_ets = Items, atimes_ets = ATimes}) ->
+free_cache_entry(ATimeFun, #state{items_tree = Items, atimes_tree = ATimes}) ->
     case ATimeFun() of
-    '$end_of_table' ->
-        ok;  % empty cache
-    ATime ->
-        [{ATime, Key}] = ets:lookup(ATimes, ATime),
-        [{Key, {_Item, ATime, Timer}}] = ets:lookup(Items, Key),
+    none ->
+        {Items, ATimes};  % empty cache
+    {ATime, Key} ->
+        {_Item, ATime, Timer} = gb_trees:get(Key, Items),
         cancel_timer(Key, Timer),
-        true = ets:delete(ATimes, ATime),
-        true = ets:delete(Items, Key)
+        {gb_trees:delete(Key, Items), gb_trees:delete(ATime, ATimes)}
     end.
 
 
@@ -225,6 +248,7 @@ test_simple_lru() ->
     {ok, [1, 2, 3]} = ?MODULE:get(Cache, <<"key_2">>),
     ok = ?MODULE:put(Cache, {key, "3"}, {ok, 666}),
     {ok, {ok, 666}} = ?MODULE:get(Cache, {key, "3"}),
+
     ok = ?MODULE:put(Cache, "key4", "hello"),
     {ok, "hello"} = ?MODULE:get(Cache, "key4"),
     not_found = ?MODULE:get(Cache, key1),
