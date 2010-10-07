@@ -18,6 +18,7 @@
 % public API
 -export([start_link/1, stop/1]).
 -export([get/2, put/3]).
+-export([flush/1]).
 -export([run_tests/0]).
 
 % gen_server callbacks
@@ -46,6 +47,11 @@ get(Cache, Key) ->
 %% @spec put(cache(), key(), item()) -> ok
 put(Cache, Key, Item) ->
     ok = gen_server:cast(Cache, {put, Key, Item}).
+
+
+%% @spec flush(cache()) -> ok
+flush(Cache) ->
+    ok = gen_server:cast(Cache, flush).
 
 
 %% @spec start_link(options()) -> {ok, pid()}
@@ -95,7 +101,17 @@ handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     Timer = set_timer(Key, Timeout),
     true = ets:insert(ATimes, {ATime, Key}),
     true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    {noreply, State#state{cache_size = NewCacheSize}}.
+    {noreply, State#state{cache_size = NewCacheSize}};
+
+handle_cast(flush, #state{items_ets = Items, atimes_ets = ATimes} = State) ->
+    ets:foldl(
+        fun({Key, {_Item, _ATime, Timer}}, _) -> cancel_timer(Key, Timer) end,
+        ok,
+        Items
+    ),
+    true = ets:delete_all_objects(Items),
+    true = ets:delete_all_objects(ATimes),
+    {noreply, State#state{cache_size = 0}}.
 
 
 handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
@@ -209,6 +225,10 @@ test_simple_lru() ->
     ok = ?MODULE:put(Cache, 666, "the beast"),
     {ok, "the beast"} = ?MODULE:get(Cache, 666),
     not_found = ?MODULE:get(Cache, "key4"),
+    ok = ?MODULE:flush(Cache),
+    not_found = ?MODULE:get(Cache, 666),
+    not_found = ?MODULE:get(Cache, <<"key_2">>),
+    not_found = ?MODULE:get(Cache, {key, "3"}),
     ok = ?MODULE:stop(Cache).
 
 test_simple_mru() ->
@@ -230,6 +250,10 @@ test_simple_mru() ->
     ok = ?MODULE:put(Cache, keyboard, "qwerty"),
     {ok, "qwerty"} = ?MODULE:get(Cache, keyboard),
     not_found = ?MODULE:get(Cache, key1),
+    ok = ?MODULE:flush(Cache),
+    not_found = ?MODULE:get(Cache, keyboard),
+    not_found = ?MODULE:get(Cache, "key4"),
+    not_found = ?MODULE:get(Cache, <<"key_2">>),
     ok = ?MODULE:stop(Cache).
 
 test_timed_lru() ->
