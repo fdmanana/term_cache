@@ -99,9 +99,9 @@ handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
         atimes_tree = ATimes
     } = State,
     {Items2, ATimes2} = case gb_trees:lookup(Key, Items) of
-    {value, {_OldItem, _OldATime, OldTimer}} ->
+    {value, {_OldItem, OldATime, OldTimer}} ->
         cancel_timer(Key, OldTimer),
-        {gb_trees:delete(Key, Items), ATimes};
+        {gb_trees:delete(Key, Items), gb_trees:delete(OldATime, ATimes)};
     none ->
         case gb_trees:size(Items) >= MaxSize of
         true ->
