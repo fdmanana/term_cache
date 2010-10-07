@@ -5,7 +5,7 @@ Keys and values can be any Erlang term.
 
 Each cache instance can be configured with the following parameters:
 
-* {name, atom()} - name of the cache process. Default is 'term_cache'.
+* {name, atom()} - name of the cache process. Optional, default to none (unnamed process).
 * {size, int()} - maximum size (number of items). Default is 100.
 * {policy, lru | mru} - cache entry replacement policy. Default is 'lru'.
 * {ttl, int()} - the Time To Live (TTL) for cache entries. If an entry is not accessed within this time period, it will be purged from the cache. Default is 0 (no TTL).

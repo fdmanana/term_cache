@@ -68,8 +68,12 @@ flush(Cache) ->
 %%                   {ttl, int()}
 %% @type policy() = lru | mru
 start_link(Options) ->
-    Name = value(name, Options, ?MODULE),
-    gen_server:start_link({local, Name}, ?MODULE, Options, []).
+    case value(name, Options, undefined) of
+    undefined ->
+        gen_server:start_link(?MODULE, Options, []);
+    Name ->
+        gen_server:start_link({local, Name}, ?MODULE, Options, [])
+    end.
 
 
 %% @spec stop(cache()) -> ok
