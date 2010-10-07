@@ -77,7 +77,8 @@ start_link(Options) ->
 
 %% @spec stop(cache()) -> ok
 stop(Cache) ->
-    ok = gen_server:call(Cache, stop).
+    catch gen_server:call(Cache, stop),
+    ok.
 
 
 init(Options) ->
