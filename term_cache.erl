@@ -164,22 +164,17 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 free_cache_entry(#state{policy = lru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(fun() -> ets:first(ATimes) end, State);
-
+    free_cache_entry(ets:first(ATimes), State);
 free_cache_entry(#state{policy = mru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(fun() -> ets:last(ATimes) end, State).
+    free_cache_entry(ets:last(ATimes), State).
 
-free_cache_entry(ATimeFun, #state{items_ets = Items, atimes_ets = ATimes}) ->
-    case ATimeFun() of
-    '$end_of_table' ->
-        ok;  % empty cache
-    ATime ->
-        [{ATime, Key}] = ets:lookup(ATimes, ATime),
-        [{Key, {_Item, ATime, Timer}}] = ets:lookup(Items, Key),
-        cancel_timer(Key, Timer),
-        true = ets:delete(ATimes, ATime),
-        true = ets:delete(Items, Key)
-    end.
+
+free_cache_entry(ATime, #state{items_ets = Items, atimes_ets = ATimes}) ->
+    [{ATime, Key}] = ets:lookup(ATimes, ATime),
+    [{Key, {_Item, ATime, Timer}}] = ets:lookup(Items, Key),
+    cancel_timer(Key, Timer),
+    true = ets:delete(ATimes, ATime),
+    true = ets:delete(Items, Key).
 
 
 set_timer(_Key, 0) ->
