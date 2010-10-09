@@ -93,6 +93,8 @@ init(Options) ->
     {ok, State}.
 
 
+handle_cast({put, _Key, _Item}, #state{max_cache_size = 0} = State) ->
+    {noreply, State};
 handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
     #state{
         cache_size = CacheSize,
