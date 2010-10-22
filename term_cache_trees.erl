@@ -100,23 +100,28 @@ handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
         items_tree = Items,
         atimes_tree = ATimes
     } = State,
-    {Items2, ATimes2} = case gb_trees:lookup(Key, Items) of
+    {NewItems, NewATimes} = case gb_trees:lookup(Key, Items) of
     {value, {_OldItem, OldATime, OldTimer}} ->
         cancel_timer(Key, OldTimer),
-        {gb_trees:delete(Key, Items), gb_trees:delete(OldATime, ATimes)};
+        NewATime = erlang:now(),
+        NewTimer = set_timer(Key, Timeout),
+        Items2 = gb_trees:enter(Key, {Item, NewATime, NewTimer}, Items),
+        ATimes2 = gb_trees:delete(OldATime, ATimes),
+        {Items2, gb_trees:insert(NewATime, Key, ATimes2)};
     none ->
-        case gb_trees:size(Items) >= MaxSize of
+        {Items2, ATimes2} = case gb_trees:size(Items) >= MaxSize of
         true ->
             free_cache_entry(State);
         false ->
             {Items, ATimes}
-        end
+        end,
+        NewATime = erlang:now(),
+        NewTimer = set_timer(Key, Timeout),
+        ATimes3 = gb_trees:insert(NewATime, Key, ATimes2),
+        Items3 = gb_trees:insert(Key, {Item, NewATime, NewTimer}, Items2),
+        {Items3, ATimes3}
     end,
-    ATime = erlang:now(),
-    Timer = set_timer(Key, Timeout),
-    ATimes3 = gb_trees:insert(ATime, Key, ATimes2),
-    Items3 = gb_trees:insert(Key, {Item, ATime, Timer}, Items2),
-    {noreply, State#state{items_tree = Items3, atimes_tree = ATimes3}};
+    {noreply, State#state{items_tree = NewItems, atimes_tree = NewATimes}};
 
 handle_cast(flush, #state{items_tree = Items} = State) ->
     lists:foldl(
@@ -170,16 +175,19 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-free_cache_entry(#state{policy = lru, atimes_tree = ATimes} = State) ->
-    free_cache_entry(gb_trees:smallest(ATimes), State);
-free_cache_entry(#state{policy = mru, atimes_tree = ATimes} = State) ->
-    free_cache_entry(gb_trees:largest(ATimes), State).
-
-
-free_cache_entry({ATime, Key}, #state{items_tree = Items, atimes_tree = ATimes}) ->
+free_cache_entry(#state{policy = lru} = State) ->
+    #state{atimes_tree = ATimes, items_tree = Items} = State,
+    {ATime, Key, ATimes2} = gb_trees:take_smallest(ATimes),
     {_Item, ATime, Timer} = gb_trees:get(Key, Items),
     cancel_timer(Key, Timer),
-    {gb_trees:delete(Key, Items), gb_trees:delete(ATime, ATimes)}.
+    {gb_trees:delete(Key, Items), ATimes2};
+
+free_cache_entry(#state{policy = mru} = State) ->
+    #state{atimes_tree = ATimes, items_tree = Items} = State,
+    {ATime, Key, ATimes2} = gb_trees:take_largest(ATimes),
+    {_Item, ATime, Timer} = gb_trees:get(Key, Items),
+    cancel_timer(Key, Timer),
+    {gb_trees:delete(Key, Items), ATimes2}.
 
 
 set_timer(_Key, 0) ->
