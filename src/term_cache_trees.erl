@@ -283,7 +283,7 @@ simple_mru_test() ->
     ?assertEqual(ok, ?MODULE:stop(Cache)).
 
 timed_lru_test_() ->
-    {timeout, 60, [{?LINE, fun do_test_timed_lru/0}]}.
+    {timeout, 60, [fun do_test_timed_lru/0]}.
 
 do_test_timed_lru() ->
     {ok, Cache} = ?MODULE:start_link(
@@ -308,7 +308,7 @@ do_test_timed_lru() ->
     ?assertEqual(ok, ?MODULE:stop(Cache)).
 
 timed_mru_test_() ->
-    {timeout, 60, [{?LINE, fun do_test_timed_mru/0}]}.
+    {timeout, 60, [fun do_test_timed_mru/0]}.
 
 do_test_timed_mru() ->
     {ok, Cache} = ?MODULE:start_link(
