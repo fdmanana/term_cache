@@ -27,7 +27,6 @@
 -export([start_link/1, stop/1]).
 -export([get/2, put/3]).
 -export([flush/1]).
--export([run_tests/0]).
 
 % gen_server callbacks
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2]).
@@ -220,112 +219,117 @@ value(Key, List, Default) ->
 
 % TESTS
 
-run_tests() ->
-    ok = test_simple_lru(),
-    ok = test_simple_mru(),
-    ok = test_timed_lru(),
-    ok = test_timed_mru().
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
-test_simple_lru() ->
+simple_lru_test() ->
     {ok, Cache} = ?MODULE:start_link(
         [{name, foobar}, {size, 3}, {policy, lru}]
     ),
-    Cache = whereis(foobar),
-    not_found = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:put(Cache, key1, value1),
-    {ok, value1} = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3]),
-    {ok, [1, 2, 3]} = ?MODULE:get(Cache, <<"key_2">>),
-    ok = ?MODULE:put(Cache, {key, "3"}, {ok, 666}),
-    {ok, {ok, 666}} = ?MODULE:get(Cache, {key, "3"}),
+    ?assertEqual(Cache, whereis(foobar)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
+    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3])),
+    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, {key, "3"}, {ok, 666})),
+    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
 
-    ok = ?MODULE:put(Cache, "key4", "hello"),
-    {ok, "hello"} = ?MODULE:get(Cache, "key4"),
-    not_found = ?MODULE:get(Cache, key1),
-    {ok, [1, 2, 3]} = ?MODULE:get(Cache, <<"key_2">>),
-    {ok, {ok, 666}} = ?MODULE:get(Cache, {key, "3"}),
-    ok = ?MODULE:put(Cache, 666, "the beast"),
-    {ok, "the beast"} = ?MODULE:get(Cache, 666),
-    ok = ?MODULE:put(Cache, 666, <<"maiden">>),
-    {ok, <<"maiden">>} = ?MODULE:get(Cache, 666),
-    not_found = ?MODULE:get(Cache, "key4"),
-    ok = ?MODULE:put(Cache, 999, <<"the saint">>),
-    {ok, <<"the saint">>} = ?MODULE:get(Cache, 999),
-    ok = ?MODULE:put(Cache, 666, "the beast"),
-    {ok, "the beast"} = ?MODULE:get(Cache, 666),
-    ok = ?MODULE:flush(Cache),
-    not_found = ?MODULE:get(Cache, 666),
-    not_found = ?MODULE:get(Cache, <<"key_2">>),
-    not_found = ?MODULE:get(Cache, {key, "3"}),
-    ok = ?MODULE:stop(Cache).
+    ?assertEqual(ok, ?MODULE:put(Cache, "key4", "hello")),
+    ?assertEqual({ok, "hello"}, ?MODULE:get(Cache, "key4")),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
+    ?assertEqual(ok, ?MODULE:put(Cache, 666, "the beast")),
+    ?assertEqual({ok, "the beast"}, ?MODULE:get(Cache, 666)),
+    ?assertEqual(ok, ?MODULE:put(Cache, 666, <<"maiden">>)),
+    ?assertEqual({ok, <<"maiden">>}, ?MODULE:get(Cache, 666)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
+    ?assertEqual(ok, ?MODULE:put(Cache, 999, <<"the saint">>)),
+    ?assertEqual({ok, <<"the saint">>}, ?MODULE:get(Cache, 999)),
+    ?assertEqual(ok, ?MODULE:put(Cache, 666, "the beast")),
+    ?assertEqual({ok, "the beast"}, ?MODULE:get(Cache, 666)),
+    ?assertEqual(ok, ?MODULE:flush(Cache)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, 666)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, {key, "3"})),
+    ?assertEqual(ok, ?MODULE:stop(Cache)).
 
-test_simple_mru() ->
+simple_mru_test() ->
     {ok, Cache} = ?MODULE:start_link(
         [{name, foobar_mru}, {size, 3}, {policy, mru}]
     ),
-    Cache = whereis(foobar_mru),
-    not_found = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:put(Cache, key1, value1),
-    {ok, value1} = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3]),
-    {ok, [1, 2, 3]} = ?MODULE:get(Cache, <<"key_2">>),
-    ok = ?MODULE:put(Cache, {key, "3"}, {ok, 666}),
-    {ok, {ok, 666}} = ?MODULE:get(Cache, {key, "3"}),
-    ok = ?MODULE:put(Cache, "key4", "hello"),
-    {ok, "hello"} = ?MODULE:get(Cache, "key4"),
-    not_found = ?MODULE:get(Cache, {key, "3"}),
-    {ok, value1} = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:put(Cache, keyboard, "qwerty"),
-    {ok, "qwerty"} = ?MODULE:get(Cache, keyboard),
-    ok = ?MODULE:put(Cache, keyboard, "azwerty"),
-    {ok, "azwerty"} = ?MODULE:get(Cache, keyboard),
-    not_found = ?MODULE:get(Cache, key1),
-    ok = ?MODULE:flush(Cache),
-    not_found = ?MODULE:get(Cache, keyboard),
-    not_found = ?MODULE:get(Cache, "key4"),
-    not_found = ?MODULE:get(Cache, <<"key_2">>),
-    ok = ?MODULE:stop(Cache).
+    ?assertEqual(Cache, whereis(foobar_mru)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
+    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3])),
+    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, {key, "3"}, {ok, 666})),
+    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
+    ?assertEqual(ok, ?MODULE:put(Cache, "key4", "hello")),
+    ?assertEqual({ok, "hello"}, ?MODULE:get(Cache, "key4")),
+    ?assertEqual(not_found, ?MODULE:get(Cache, {key, "3"})),
+    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, keyboard, "qwerty")),
+    ?assertEqual({ok, "qwerty"}, ?MODULE:get(Cache, keyboard)),
+    ?assertEqual(ok, ?MODULE:put(Cache, keyboard, "azwerty")),
+    ?assertEqual({ok, "azwerty"}, ?MODULE:get(Cache, keyboard)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:flush(Cache)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, keyboard)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
+    ?assertEqual(not_found, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual(ok, ?MODULE:stop(Cache)).
 
-test_timed_lru() ->
+timed_lru_test_() ->
+    {timeout, 60, [{?LINE, fun do_test_timed_lru/0}]}.
+
+do_test_timed_lru() ->
     {ok, Cache} = ?MODULE:start_link(
         [{name, timed_foobar}, {size, 3}, {policy, lru}, {ttl, 3000}]
     ),
-    Cache = whereis(timed_foobar),
-    ok = ?MODULE:put(Cache, key1, value1),
+    ?assertEqual(Cache, whereis(timed_foobar)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
     timer:sleep(1000),
-    ok = ?MODULE:put(Cache, key2, value2),
-    ok = ?MODULE:put(Cache, key3, value3),
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, value2)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, value3)),
     timer:sleep(2100),
-    not_found = ?MODULE:get(Cache, key1),
-    {ok, value2} = ?MODULE:get(Cache, key2),
-    {ok, value3} = ?MODULE:get(Cache, key3),
-    ok = ?MODULE:put(Cache, key4, value4),
-    ok = ?MODULE:put(Cache, key5, value5),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, value2}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key4, value4)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, value5)),
     timer:sleep(1000),
-    not_found = ?MODULE:get(Cache, key2),
-    {ok, value3} = ?MODULE:get(Cache, key3),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
     timer:sleep(3100),
-    not_found = ?MODULE:get(Cache, key3),
-    ok = ?MODULE:stop(Cache).
+    ?assertEqual(not_found, ?MODULE:get(Cache, key3)),
+    ?assertEqual(ok, ?MODULE:stop(Cache)).
 
-test_timed_mru() ->
+timed_mru_test_() ->
+    {timeout, 60, [{?LINE, fun do_test_timed_mru/0}]}.
+
+do_test_timed_mru() ->
     {ok, Cache} = ?MODULE:start_link(
         [{name, timed_foobar}, {size, 3}, {policy, mru}, {ttl, 3000}]
     ),
-    Cache = whereis(timed_foobar),
-    ok = ?MODULE:put(Cache, key1, value1),
+    ?assertEqual(Cache, whereis(timed_foobar)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
     timer:sleep(1000),
-    ok = ?MODULE:put(Cache, key2, value2),
-    ok = ?MODULE:put(Cache, key3, value3),
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, value2)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, value3)),
     timer:sleep(2100),
-    not_found = ?MODULE:get(Cache, key1),
-    {ok, value2} = ?MODULE:get(Cache, key2),
-    {ok, value3} = ?MODULE:get(Cache, key3),
-    ok = ?MODULE:put(Cache, key4, value4),
-    ok = ?MODULE:put(Cache, key5, value5),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, value2}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key4, value4)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, value5)),
     timer:sleep(1000),
-    not_found = ?MODULE:get(Cache, key4),
-    {ok, value3} = ?MODULE:get(Cache, key3),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key4)),
+    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
     timer:sleep(3100),
-    not_found = ?MODULE:get(Cache, key3),
-    ok = ?MODULE:stop(Cache).
+    ?assertEqual(not_found, ?MODULE:get(Cache, key3)),
+    ?assertEqual(ok, ?MODULE:stop(Cache)).
+
+-endif.
