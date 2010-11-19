@@ -20,7 +20,7 @@
 % NOTE: the maximum number of instantiated ets tables allowed by the Erlang VM
 %       is limited.
 
--module(term_cache).
+-module(term_cache_ets).
 -behaviour(gen_server).
 
 % public API
