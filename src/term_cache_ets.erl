@@ -32,13 +32,18 @@
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2]).
 -export([code_change/3, terminate/2]).
 
+-define(DEFAULT_POLICY, lru).
+-define(DEFAULT_SIZE, 128 * 1024).
+-define(DEFAULT_TTL, 0). % 0 means no TTL
+
 -record(state, {
-    max_cache_size = 100,
-    cache_size = 0,
-    policy = lru,
-    timeout = 0,  % milliseconds
-    items_ets,
-    atimes_ets
+    cache_size,
+    free,       % free space
+    policy,
+    ttl,        % milliseconds
+    items,
+    atimes,
+    take_fun
 }).
 
 %% @type cache() = pid() | atom()
@@ -53,7 +58,7 @@ get(Cache, Key) ->
 
 %% @spec put(cache(), key(), item()) -> ok
 put(Cache, Key, Item) ->
-    ok = gen_server:cast(Cache, {put, Key, Item}).
+    ok = gen_server:cast(Cache, {put, Key, Item, term_size(Item)}).
 
 
 %% @spec flush(cache()) -> ok
@@ -82,62 +87,65 @@ stop(Cache) ->
 
 
 init(Options) ->
+    Size = value(size, Options, ?DEFAULT_SIZE),
+    Policy= value(policy, Options, ?DEFAULT_POLICY),
     State = #state{
-        policy = value(policy, Options, lru),
-        max_cache_size = value(size, Options, 100),
-        timeout = value(ttl, Options, 0),  % 0 means no timeout
-        items_ets = ets:new(cache_by_items_ets, [set, private]),
-        atimes_ets = ets:new(cache_by_atimes_ets, [ordered_set, private])
+        policy = Policy,
+        cache_size = Size,
+        free = Size,
+        ttl = value(ttl, Options, ?DEFAULT_TTL),
+        items = ets:new(cache_by_items, [set, private]),
+        atimes = ets:new(cache_by_atimes, [ordered_set, private]),
+        take_fun = case Policy of
+            lru ->
+                fun ets:first/1;
+            mru ->
+                fun ets:last/1
+            end
     },
     {ok, State}.
 
 
-handle_cast({put, _Key, _Item}, #state{max_cache_size = 0} = State) ->
+handle_cast({put, _Key, _Item, ItemSize},
+    #state{cache_size = CacheSize} = State) when ItemSize > CacheSize ->
     {noreply, State};
-handle_cast({put, Key, Item}, #state{timeout = Timeout} = State) ->
-    #state{
-        cache_size = CacheSize,
-        max_cache_size = MaxSize,
-        items_ets = Items,
-        atimes_ets = ATimes
-    } = State,
-    NewCacheSize = case ets:lookup(Items, Key) of
-    [{Key, {_OldItem, _OldATime, OldTimer}}] ->
-        cancel_timer(Key, OldTimer),
-        CacheSize;
-    [] when CacheSize >= MaxSize ->
-        free_cache_entry(State),
-        CacheSize;
-    [] ->
-        CacheSize + 1
-    end,
-    ATime = erlang:now(),
-    Timer = set_timer(Key, Timeout),
-    true = ets:insert(ATimes, {ATime, Key}),
-    true = ets:insert(Items, {Key, {Item, ATime, Timer}}),
-    {noreply, State#state{cache_size = NewCacheSize}};
 
-handle_cast(flush, #state{items_ets = Items, atimes_ets = ATimes} = State) ->
+handle_cast({put, Key, Item, ItemSize}, State) ->
+    #state{
+        items = Items,
+        atimes = ATimes,
+        ttl = Ttl,
+        free = Free
+    } = free_until(purge_item(Key, State), ItemSize),
+    io:format("ItemSize: ~p~n", [ItemSize]),
+    Now = erlang:now(),
+    Timer = set_timer(Key, Ttl),
+    true = ets:insert(ATimes, {Now, Key}),
+    true = ets:insert(Items, {Key, {Item, ItemSize, Now, Timer}}),
+    {noreply, State#state{free = Free - ItemSize}};
+
+handle_cast(flush,
+    #state{items = Items, atimes = ATimes, cache_size = Size} = State) ->
     ets:foldl(
-        fun({Key, {_Item, _ATime, Timer}}, _) -> cancel_timer(Key, Timer) end,
+        fun({Key, {_, _, _, Timer}}, _) -> cancel_timer(Key, Timer) end,
         ok,
         Items
     ),
     true = ets:delete_all_objects(Items),
     true = ets:delete_all_objects(ATimes),
-    {noreply, State#state{cache_size = 0}}.
+    {noreply, State#state{free = Size}}.
 
 
-handle_call({get, Key}, _From, #state{timeout = Timeout} = State) ->
-    #state{items_ets = Items, atimes_ets = ATimes} = State,
+handle_call({get, Key}, _From, State) ->
+    #state{items = Items, atimes = ATimes, ttl = Ttl} = State,
     case ets:lookup(Items, Key) of
-    [{Key, {Item, ATime, Timer}}] ->
+    [{Key, {Item, ItemSize, ATime, Timer}}] ->
         cancel_timer(Key, Timer),
         NewATime = erlang:now(),
         true = ets:delete(ATimes, ATime),
         true = ets:insert(ATimes, {NewATime, Key}),
-        NewTimer = set_timer(Key, Timeout),
-        true = ets:insert(Items, {Key, {Item, NewATime, NewTimer}}),
+        NewTimer = set_timer(Key, Ttl),
+        true = ets:insert(Items, {Key, {Item, ItemSize, NewATime, NewTimer}}),
         {reply, {ok, Item}, State};
     [] ->
         {reply, not_found, State}
@@ -147,15 +155,15 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 
-handle_info({expired, Key}, #state{cache_size = CacheSize} = State) ->
-    #state{items_ets = Items, atimes_ets = ATimes} = State,
-    [{Key, {_Item, ATime, _Timer}}] = ets:lookup(Items, Key),
+handle_info({expired, Key}, State) ->
+    #state{items = Items, atimes = ATimes, free = Free} = State,
+    [{Key, {_Item, ItemSize, ATime, _Timer}}] = ets:lookup(Items, Key),
     true = ets:delete(Items, Key),
     true = ets:delete(ATimes, ATime),
-    {noreply, State#state{cache_size = CacheSize - 1}}.
+    {noreply, State#state{free = Free + ItemSize}}.
 
 
-terminate(_Reason, #state{items_ets = Items, atimes_ets = ATimes}) ->
+terminate(_Reason, #state{items = Items, atimes = ATimes}) ->
     true = ets:delete(Items),
     true = ets:delete(ATimes).
 
@@ -164,18 +172,34 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-free_cache_entry(#state{policy = lru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(ets:first(ATimes), State);
-free_cache_entry(#state{policy = mru, atimes_ets = ATimes} = State) ->
-    free_cache_entry(ets:last(ATimes), State).
+purge_item(Key, #state{atimes = ATimes, items = Items, free = Free} = State) ->
+    case ets:lookup(Items, Key) of
+    [{Key, {_Item, ItemSize, ATime, Timer}}] ->
+        cancel_timer(Key, Timer),
+        true = ets:delete(ATimes, ATime),
+        true = ets:delete(Items, Key),
+        State#state{free = Free + ItemSize};
+    [] ->
+        State
+    end.
 
 
-free_cache_entry(ATime, #state{items_ets = Items, atimes_ets = ATimes}) ->
+free_until(#state{free = Free} = State, MinFreeSize) when Free >= MinFreeSize ->
+    State;
+free_until(State, MinFreeSize) ->
+    State2 = free_cache_entry(State),
+    free_until(State2, MinFreeSize).
+
+
+free_cache_entry(#state{take_fun = TakeFun} = State) ->
+    #state{atimes = ATimes, items = Items, free = Free} = State,
+    ATime = TakeFun(ATimes),
     [{ATime, Key}] = ets:lookup(ATimes, ATime),
-    [{Key, {_Item, ATime, Timer}}] = ets:lookup(Items, Key),
+    [{Key, {_Item, ItemSize, ATime, Timer}}] = ets:lookup(Items, Key),
     cancel_timer(Key, Timer),
     true = ets:delete(ATimes, ATime),
-    true = ets:delete(Items, Key).
+    true = ets:delete(Items, Key),
+    State#state{free = Free + ItemSize}.
 
 
 set_timer(_Key, 0) ->
@@ -206,6 +230,12 @@ value(Key, List, Default) ->
     end.
 
 
+term_size(Term) when is_binary(Term) ->
+    byte_size(Term);
+term_size(Term) ->
+    byte_size(term_to_binary(Term)).
+
+
 % TESTS
 
 -ifdef(TEST).
@@ -213,112 +243,154 @@ value(Key, List, Default) ->
 
 simple_lru_test() ->
     {ok, Cache} = ?MODULE:start_link(
-        [{name, foobar}, {size, 3}, {policy, lru}]
+        [{name, foobar}, {size, 9}, {policy, lru}]
     ),
     ?assertEqual(Cache, whereis(foobar)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
-    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
-    ?assertEqual(ok, ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3])),
-    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
-    ?assertEqual(ok, ?MODULE:put(Cache, {key, "3"}, {ok, 666})),
-    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
 
-    ?assertEqual(ok, ?MODULE:put(Cache, "key4", "hello")),
-    ?assertEqual({ok, "hello"}, ?MODULE:get(Cache, "key4")),
     ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
-    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
-    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
-    ?assertEqual(ok, ?MODULE:put(Cache, 666, "the beast")),
-    ?assertEqual({ok, "the beast"}, ?MODULE:get(Cache, 666)),
-    ?assertEqual(ok, ?MODULE:put(Cache, 666, <<"maiden">>)),
-    ?assertEqual({ok, <<"maiden">>}, ?MODULE:get(Cache, 666)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, <<"abc">>)),
+    ?assertEqual({ok, <<"abc">>}, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, <<"foo">>)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, <<"bar">>)),
+    ?assertEqual({ok, <<"bar">>}, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, keyfoo, <<"a_too_large_binary">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, keyfoo)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, "key4", <<"qwe">>)),
+    ?assertEqual({ok, <<"qwe">>}, ?MODULE:get(Cache, "key4")),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"bar">>}, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"123">>)),
+    ?assertEqual({ok, <<"123">>}, ?MODULE:get(Cache, key5)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"321">>)),
+    ?assertEqual({ok, <<"321">>}, ?MODULE:get(Cache, key5)),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
-    ?assertEqual(ok, ?MODULE:put(Cache, 999, <<"the saint">>)),
-    ?assertEqual({ok, <<"the saint">>}, ?MODULE:get(Cache, 999)),
-    ?assertEqual(ok, ?MODULE:put(Cache, 666, "the beast")),
-    ?assertEqual({ok, "the beast"}, ?MODULE:get(Cache, 666)),
+    ?assertEqual(ok, ?MODULE:put(Cache, <<"key6">>, <<"666">>)),
+    ?assertEqual({ok, <<"666">>}, ?MODULE:get(Cache, <<"key6">>)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"777">>)),
+    ?assertEqual({ok, <<"777">>}, ?MODULE:get(Cache, key5)),
     ?assertEqual(ok, ?MODULE:flush(Cache)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, 666)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, <<"key_2">>)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, {key, "3"})),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key5)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, <<"key6">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
+
     ?assertEqual(ok, ?MODULE:stop(Cache)).
+
 
 simple_mru_test() ->
     {ok, Cache} = ?MODULE:start_link(
-        [{name, foobar_mru}, {size, 3}, {policy, mru}]
+        [{name, foobar_mru}, {size, 9}, {policy, mru}]
     ),
     ?assertEqual(Cache, whereis(foobar_mru)),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
-    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
-    ?assertEqual(ok, ?MODULE:put(Cache, <<"key_2">>, [1, 2, 3])),
-    ?assertEqual({ok, [1, 2, 3]}, ?MODULE:get(Cache, <<"key_2">>)),
-    ?assertEqual(ok, ?MODULE:put(Cache, {key, "3"}, {ok, 666})),
-    ?assertEqual({ok, {ok, 666}}, ?MODULE:get(Cache, {key, "3"})),
-    ?assertEqual(ok, ?MODULE:put(Cache, "key4", "hello")),
-    ?assertEqual({ok, "hello"}, ?MODULE:get(Cache, "key4")),
-    ?assertEqual(not_found, ?MODULE:get(Cache, {key, "3"})),
-    ?assertEqual({ok, value1}, ?MODULE:get(Cache, key1)),
-    ?assertEqual(ok, ?MODULE:put(Cache, keyboard, "qwerty")),
-    ?assertEqual({ok, "qwerty"}, ?MODULE:get(Cache, keyboard)),
-    ?assertEqual(ok, ?MODULE:put(Cache, keyboard, "azwerty")),
-    ?assertEqual({ok, "azwerty"}, ?MODULE:get(Cache, keyboard)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, <<"abc">>)),
+    ?assertEqual({ok, <<"abc">>}, ?MODULE:get(Cache, key1)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, <<"foo">>)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, <<"bar">>)),
+    ?assertEqual({ok, <<"bar">>}, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key4, <<"qwe">>)),
+    ?assertEqual({ok, <<"qwe">>}, ?MODULE:get(Cache, key4)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, <<"999">>)),
+    ?assertEqual({ok, <<"999">>}, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"qwe">>}, ?MODULE:get(Cache, key4)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, keyfoo, <<"a_too_large_binary">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, keyfoo)),
+
+    ?assertEqual({ok, <<"999">>}, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"qwe">>}, ?MODULE:get(Cache, key4)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"---">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key4)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key6, <<"666">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key5)),
+    ?assertEqual({ok, <<"666">>}, ?MODULE:get(Cache, key6)),
+
     ?assertEqual(ok, ?MODULE:flush(Cache)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, keyboard)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
-    ?assertEqual(not_found, ?MODULE:get(Cache, <<"key_2">>)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key6)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
+
     ?assertEqual(ok, ?MODULE:stop(Cache)).
+
 
 timed_lru_test_() ->
     {timeout, 60, [fun do_test_timed_lru/0]}.
 
 do_test_timed_lru() ->
     {ok, Cache} = ?MODULE:start_link(
-        [{name, timed_foobar}, {size, 3}, {policy, lru}, {ttl, 3000}]
+        [{name, timed_foobar}, {size, 9}, {policy, lru}, {ttl, 3000}]
     ),
     ?assertEqual(Cache, whereis(timed_foobar)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, <<"_1_">>)),
     timer:sleep(1000),
-    ?assertEqual(ok, ?MODULE:put(Cache, key2, value2)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key3, value3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, <<"-2-">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, <<"_3_">>)),
     timer:sleep(2100),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
-    ?assertEqual({ok, value2}, ?MODULE:get(Cache, key2)),
-    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key4, value4)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key5, value5)),
+    ?assertEqual({ok, <<"-2-">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"_3_">>}, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key4, <<"444">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"555">>)),
     timer:sleep(1000),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
-    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
+    ?assertEqual({ok, <<"_3_">>}, ?MODULE:get(Cache, key3)),
     timer:sleep(3100),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key3)),
     ?assertEqual(ok, ?MODULE:stop(Cache)).
+
 
 timed_mru_test_() ->
     {timeout, 60, [fun do_test_timed_mru/0]}.
 
 do_test_timed_mru() ->
     {ok, Cache} = ?MODULE:start_link(
-        [{name, timed_foobar}, {size, 3}, {policy, mru}, {ttl, 3000}]
+        [{name, timed_foobar}, {size, 9}, {policy, mru}, {ttl, 3000}]
     ),
     ?assertEqual(Cache, whereis(timed_foobar)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key1, value1)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key1, <<"111">>)),
     timer:sleep(1000),
-    ?assertEqual(ok, ?MODULE:put(Cache, key2, value2)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key3, value3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key2, <<"222">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key3, <<"333">>)),
     timer:sleep(2100),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
-    ?assertEqual({ok, value2}, ?MODULE:get(Cache, key2)),
-    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key4, value4)),
-    ?assertEqual(ok, ?MODULE:put(Cache, key5, value5)),
+    ?assertEqual({ok, <<"222">>}, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"333">>}, ?MODULE:get(Cache, key3)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key4, <<"444">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"555">>)),
     timer:sleep(1000),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key4)),
-    ?assertEqual({ok, value3}, ?MODULE:get(Cache, key3)),
+    ?assertEqual({ok, <<"333">>}, ?MODULE:get(Cache, key3)),
+    ?assertEqual({ok, <<"222">>}, ?MODULE:get(Cache, key2)),
     timer:sleep(3100),
+
     ?assertEqual(not_found, ?MODULE:get(Cache, key3)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
+
     ?assertEqual(ok, ?MODULE:stop(Cache)).
 
 -endif.
