@@ -33,14 +33,14 @@
 -export([code_change/3, terminate/2]).
 
 -define(DEFAULT_POLICY, lru).
--define(DEFAULT_SIZE, 128 * 1024).
--define(DEFAULT_TTL, 0). % 0 means no TTL
+-define(DEFAULT_SIZE, 128 * 1024). % bytes
+-define(DEFAULT_TTL, 0).           % 0 means no TTL
 
 -record(state, {
     cache_size,
-    free,     % free space
+    free,       % free space
     policy,
-    ttl,  % milliseconds
+    ttl,        % milliseconds
     items,
     atimes,
     take_fun
