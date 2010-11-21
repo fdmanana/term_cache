@@ -117,7 +117,6 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
         ttl = Ttl,
         free = Free
     } = free_until(purge_item(Key, State), ItemSize),
-    io:format("ItemSize: ~p~n", [ItemSize]),
     Now = erlang:now(),
     Timer = set_timer(Key, Ttl),
     true = ets:insert(ATimes, {Now, Key}),
