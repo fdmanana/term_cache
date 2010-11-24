@@ -291,10 +291,26 @@ simple_lru_test() ->
 
     ?assertEqual(ok, ?MODULE:put(Cache, key5, <<"777">>)),
     ?assertEqual({ok, <<"777">>}, ?MODULE:get(Cache, key5)),
-    ?assertEqual(ok, ?MODULE:flush(Cache)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, key5)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key7, <<"12345">>)),
+    ?assertEqual({ok, <<"12345">>}, ?MODULE:get(Cache, key7)),
+    ?assertEqual({ok, <<"777">>}, ?MODULE:get(Cache, key5)),
     ?assertEqual(not_found, ?MODULE:get(Cache, <<"key6">>)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, "key4")),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key8, <<"X">>)),
+    ?assertEqual({ok, <<"X">>}, ?MODULE:get(Cache, key8)),
+    ?assertEqual({ok, <<"12345">>}, ?MODULE:get(Cache, key7)),
+    ?assertEqual({ok, <<"777">>}, ?MODULE:get(Cache, key5)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key9, <<"Yz">>)),
+    ?assertEqual({ok, <<"Yz">>}, ?MODULE:get(Cache, key9)),
+    ?assertEqual({ok, <<"777">>}, ?MODULE:get(Cache, key5)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key8)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key7)),
+
+    ?assertEqual(ok, ?MODULE:flush(Cache)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key9)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key5)),
 
     ?assertEqual(ok, ?MODULE:stop(Cache)).
 
@@ -334,11 +350,34 @@ simple_mru_test() ->
     ?assertEqual(ok, ?MODULE:put(Cache, key6, <<"666">>)),
     ?assertEqual(not_found, ?MODULE:get(Cache, key5)),
     ?assertEqual({ok, <<"666">>}, ?MODULE:get(Cache, key6)),
+    ?assertEqual({ok, <<"999">>}, ?MODULE:get(Cache, key1)),
+    ?assertEqual({ok, <<"foo">>}, ?MODULE:get(Cache, key2)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key7, <<"x">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key8, <<"y">>)),
+    ?assertEqual(ok, ?MODULE:put(Cache, key9, <<"z">>)),
+
+    ?assertEqual({ok, <<"z">>}, ?MODULE:get(Cache, key9)),
+    ?assertEqual({ok, <<"y">>}, ?MODULE:get(Cache, key8)),
+    ?assertEqual({ok, <<"x">>}, ?MODULE:get(Cache, key7)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
+    ?assertEqual({ok, <<"666">>}, ?MODULE:get(Cache, key6)),
+    ?assertEqual({ok, <<"999">>}, ?MODULE:get(Cache, key1)),
+
+    ?assertEqual(ok, ?MODULE:put(Cache, key10, <<"--">>)),
+    ?assertEqual({ok, <<"--">>}, ?MODULE:get(Cache, key10)),
+    ?assertEqual({ok, <<"z">>}, ?MODULE:get(Cache, key9)),
+    ?assertEqual({ok, <<"y">>}, ?MODULE:get(Cache, key8)),
+    ?assertEqual({ok, <<"x">>}, ?MODULE:get(Cache, key7)),
+    ?assertEqual({ok, <<"666">>}, ?MODULE:get(Cache, key6)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
 
     ?assertEqual(ok, ?MODULE:flush(Cache)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key10)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key9)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key8)),
+    ?assertEqual(not_found, ?MODULE:get(Cache, key7)),
     ?assertEqual(not_found, ?MODULE:get(Cache, key6)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, key2)),
-    ?assertEqual(not_found, ?MODULE:get(Cache, key1)),
 
     ?assertEqual(ok, ?MODULE:stop(Cache)).
 
