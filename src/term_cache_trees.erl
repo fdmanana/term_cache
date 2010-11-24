@@ -33,7 +33,7 @@
 -export([code_change/3, terminate/2]).
 
 -define(DEFAULT_POLICY, lru).
--define(DEFAULT_SIZE, 128 * 1024). % bytes
+-define(DEFAULT_SIZE, "128Kb").    % bytes
 -define(DEFAULT_TTL, 0).           % 0 means no TTL
 
 -record(state, {
@@ -68,8 +68,9 @@ flush(Cache) ->
 
 %% @spec start_link(options()) -> {ok, pid()}
 %% @type options() = [ option() ]
-%% @type option() = {name, atom()} | {policy, policy()} | {size, int()} |
+%% @type option() = {name, atom()} | {policy, policy()} | {size, size()} |
 %%                   {ttl, int()}
+%% @type size() = int() | string() | binary() | atom()
 %% @type policy() = lru | mru
 start_link(Options) ->
     case value(name, Options, undefined) of
@@ -87,7 +88,7 @@ stop(Cache) ->
 
 
 init(Options) ->
-    Size = value(size, Options, ?DEFAULT_SIZE),
+    Size = parse_size(value(size, Options, ?DEFAULT_SIZE)),
     Policy= value(policy, Options, ?DEFAULT_POLICY),
     State = #state{
         policy = Policy,
@@ -251,11 +252,51 @@ term_size(Term) ->
     byte_size(term_to_binary(Term)).
 
 
+parse_size(Size) when is_integer(Size) ->
+    Size;
+parse_size(Size) when is_atom(Size) ->
+    parse_size(atom_to_list(Size));
+parse_size(Size) ->
+    {match, [Value1, Suffix]} = re:run(
+        Size,
+        [$^, "\\s*", "(\\d+)", "\\s*", "(\\w*)", "\\s*", $$],
+        [{capture, [1, 2], list}]),
+    Value = list_to_integer(Value1),
+    case string:to_lower(Suffix) of
+    [] ->
+        Value;
+    "b" ->
+        Value;
+    "kb" ->
+        Value * 1024;
+    "mb" ->
+        Value * 1024 * 1024;
+    "gb" ->
+        Value * 1024 * 1024 * 1024
+    end.
+
 
 % TESTS
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+parse_size_test() ->
+    ?assertEqual(512, parse_size(512)),
+    ?assertEqual(512, parse_size('512')),
+    ?assertEqual(512, parse_size("512")),
+    ?assertEqual(512, parse_size(<<"512">>)),
+    ?assertEqual(512, parse_size("512b")),
+    ?assertEqual(512, parse_size('512b ')),
+    ?assertEqual(1024, parse_size("1Kb")),
+    ?assertEqual(1024, parse_size(" 1KB ")),
+    ?assertEqual(1048576, parse_size("1024Kb")),
+    ?assertEqual(1048576, parse_size(<<"1Mb">>)),
+    ?assertEqual(1048576, parse_size("1024Kb")),
+    ?assertEqual(3145728, parse_size('3Mb')),
+    ?assertEqual(4294967296, parse_size('4Gb')),
+    ?assertEqual(4294967296, parse_size("4 GB")).
+
 
 simple_lru_test() ->
     {ok, Cache} = ?MODULE:start_link(
