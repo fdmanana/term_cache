@@ -213,9 +213,9 @@ cancel_timer(_Key, undefined) ->
 cancel_timer(Key, Timer) ->
     case erlang:cancel_timer(Timer) of
     false ->
-        ok;
+        receive {expired, Key} -> ok after 0 -> ok end;
     _TimeLeft ->
-        receive {expired, Key} -> ok after 0 -> ok end
+        ok
     end.
 
 
