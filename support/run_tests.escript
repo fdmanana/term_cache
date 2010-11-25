@@ -4,7 +4,7 @@
 main([EbinDir]) ->
     code:add_path(EbinDir),
     Modules = [list_to_atom(filename:basename(M, ".beam")) ||
-        M <- filelib:wildcard(filename:join([EbinDir, "*.beam"]))],
+        M <- filelib:wildcard(filename:join([EbinDir, "*_tests.beam"]))],
     lists:foreach(fun(M) -> eunit:test(M, [verbose]) end, Modules);
 
 main(_) ->
