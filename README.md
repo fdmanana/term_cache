@@ -17,6 +17,7 @@ There are 4 implementations of term_cache:
 
 
 *a key is*: the user specified key plus the insertion or last access timestamp for that key/value pair
+
 *a value is*: user specified value, value's size, access timestamp, and a timer (if the TTL option is given)
 
 Generally term_cache_dict offers the best performance for large datasets.
