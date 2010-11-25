@@ -16,10 +16,11 @@
 % A simple, configurable and generic Erlang term cache.
 % Keys and values can be any Erlang term.
 %
-% This implementation uses trees (from gb_trees module) to store both access times
-% and values.
+% This implementation uses a tree (gb_trees module) to store the access times
+% and a dictionary (dict module) to store the values.
 
--module(term_cache_trees).
+
+-module(term_cache_dict).
 -behaviour(gen_server).
 
 % public API
@@ -94,7 +95,7 @@ init(Options) ->
         cache_size = Size, % byte size
         free = Size,
         ttl = value(ttl, Options, ?DEFAULT_TTL),
-        items = gb_trees:empty(),
+        items = dict:new(),
         atimes = gb_trees:empty(),
         take_fun = case Policy of
             lru ->
@@ -120,7 +121,7 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
     Now = erlang:now(),
     Timer = set_timer(Key, Ttl),
     ATimes2 = gb_trees:insert(Now, Key, ATimes),
-    Items2 = gb_trees:insert(Key, {Item, ItemSize, Now, Timer}, Items),
+    Items2 = dict:store(Key, {Item, ItemSize, Now, Timer}, Items),
     NewState = State#state{
         items = Items2,
         atimes = ATimes2,
@@ -130,12 +131,13 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
 
 
 handle_cast(flush, #state{items = Items, cache_size = Size} = State) ->
-    tree_foreach(
-        gb_trees:iterator(Items),
-        fun(Key, {_, _, _, Timer}) -> cancel_timer(Key, Timer) end
+    dict:fold(
+        fun(Key, {_, _, _, Timer}, _) -> cancel_timer(Key, Timer) end,
+        ok,
+        Items
     ),
     NewState = State#state{
-        items = gb_trees:empty(),
+        items = dict:new(),
         atimes = gb_trees:empty(),
         free = Size
     },
@@ -144,20 +146,20 @@ handle_cast(flush, #state{items = Items, cache_size = Size} = State) ->
 
 handle_call({get, Key}, _From, State) ->
     #state{items = Items, atimes = ATimes, ttl = T} = State,
-    case gb_trees:lookup(Key, Items) of
-    {value, {Item, ItemSize, ATime, Timer}} ->
+    case dict:find(Key, Items) of
+    {ok, {Item, ItemSize, ATime, Timer}} ->
         cancel_timer(Key, Timer),
         NewATime = erlang:now(),
         ATimes2 = gb_trees:insert(
             NewATime, Key, gb_trees:delete(ATime, ATimes)),
-        Items2 = gb_trees:update(
+        Items2 = dict:store(
             Key, {Item, ItemSize, NewATime, set_timer(Key, T)}, Items),
         NewState = State#state{
             items = Items2,
             atimes = ATimes2
         },
         {reply, {ok, Item}, NewState};
-    none ->
+    error ->
         {reply, not_found, State}
     end;
 
@@ -167,9 +169,9 @@ handle_call(stop, _From, State) ->
 
 handle_info({expired, Key}, State) ->
     #state{items = Items, atimes = ATimes, free = Free} = State,
-    {_Item, ItemSize, ATime, _Timer} = gb_trees:get(Key, Items),
+    {_Item, ItemSize, ATime, _Timer} = dict:fetch(Key, Items),
     NewState = State#state{
-        items = gb_trees:delete(Key, Items),
+        items = dict:erase(Key, Items),
         atimes = gb_trees:delete(ATime, ATimes),
         free = Free + ItemSize
     },
@@ -185,15 +187,15 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 purge_item(Key, #state{atimes = ATimes, items = Items, free = Free} = State) ->
-    case gb_trees:lookup(Key, Items) of
-    {value, {_Item, ItemSize, ATime, Timer}} ->
+    case dict:find(Key, Items) of
+    {ok, {_Item, ItemSize, ATime, Timer}} ->
         cancel_timer(Key, Timer),
         State#state{
             atimes = gb_trees:delete(ATime, ATimes),
-            items = gb_trees:delete(Key, Items),
+            items = dict:erase(Key, Items),
             free = Free + ItemSize
         };
-    none ->
+    error ->
         State
     end.
 
@@ -208,10 +210,10 @@ free_until(State, MinFreeSize) ->
 free_cache_entry(#state{take_fun = TakeFun} = State) ->
     #state{atimes = ATimes, items = Items, free = Free} = State,
     {ATime, Key, ATimes2} = TakeFun(ATimes),
-    {_Item, ItemSize, ATime, Timer} = gb_trees:get(Key, Items),
+    {_Item, ItemSize, ATime, Timer} = dict:fetch(Key, Items),
     cancel_timer(Key, Timer),
     State#state{
-        items = gb_trees:delete(Key, Items),
+        items = dict:erase(Key, Items),
         atimes = ATimes2,
         free = Free + ItemSize
     }.
@@ -249,16 +251,6 @@ term_size(Term) when is_binary(Term) ->
     byte_size(Term);
 term_size(Term) ->
     byte_size(term_to_binary(Term)).
-
-
-tree_foreach(Iter, Fun) ->
-    case gb_trees:next(Iter) of
-    none ->
-        ok;
-    {Key, Val, Iter2} ->
-        Fun(Key, Val),
-        tree_foreach(Iter2, Fun)
-    end.
 
 
 parse_size(Size) when is_integer(Size) ->
