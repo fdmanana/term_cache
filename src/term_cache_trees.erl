@@ -131,9 +131,9 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
 
 
 handle_cast(flush, #state{items = Items, cache_size = Size} = State) ->
-    lists:foreach(
-        fun({Key, {_, _, _, Timer}}) -> cancel_timer(Key, Timer) end,
-        gb_trees:to_list(Items)
+    tree_foreach(
+        gb_trees:iterator(Items),
+        fun(Key, {_, _, _, Timer}) -> cancel_timer(Key, Timer) end
     ),
     NewState = State#state{
         items = gb_trees:empty(),
@@ -250,6 +250,16 @@ term_size(Term) when is_binary(Term) ->
     byte_size(Term);
 term_size(Term) ->
     byte_size(term_to_binary(Term)).
+
+
+tree_foreach(Iter, Fun) ->
+    case gb_trees:next(Iter) of
+    none ->
+        ok;
+    {Key, Val, Iter2} ->
+        Fun(Key, Val),
+        tree_foreach(Iter2, Fun)
+    end.
 
 
 parse_size(Size) when is_integer(Size) ->
