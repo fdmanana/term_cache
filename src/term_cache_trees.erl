@@ -16,8 +16,8 @@
 % A simple, configurable and generic Erlang term cache.
 % Keys and values can be any Erlang term.
 %
-% This implementation uses trees (from gb_trees module) to store both access times
-% and values.
+% This implementation uses trees (from the gb_trees module) to store the keys
+% and the values (one tree for the keys and another one for the values).
 
 -module(term_cache_trees).
 -behaviour(gen_server).

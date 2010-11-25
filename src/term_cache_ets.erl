@@ -16,9 +16,8 @@
 % A simple, configurable and generic Erlang term cache.
 % Keys and values can be any Erlang term.
 %
-% This implementation uses 2 ets tables per cache.
-% NOTE: the maximum number of instantiated ets tables allowed by the Erlang VM
-%       is limited.
+% This implementation uses ets tables to store keys and values (one table for
+% keys and another one for values).
 
 -module(term_cache_ets).
 -behaviour(gen_server).
