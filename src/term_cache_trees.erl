@@ -24,7 +24,7 @@
 
 % public API
 -export([start_link/1, stop/1]).
--export([get/2, put/3]).
+-export([get/2, get/3, put/3]).
 -export([flush/1]).
 
 % gen_server callbacks
@@ -48,11 +48,22 @@
 %% @type cache() = pid() | atom()
 %% @type key() = term()
 %% @type item() = term()
+%% @type timeout() = int()
 
 
 %% @spec get(cache(), key()) -> {ok, item()} | not_found
 get(Cache, Key) ->
     gen_server:call(Cache, {get, Key}, infinity).
+
+
+%% @spec get(cache(), key(), timeout()) -> {ok, item()} | not_found | timeout
+get(Cache, Key, Timeout) ->
+    try
+        gen_server:call(Cache, {get, Key}, Timeout)
+    catch
+    exit:{timeout, {gen_server, call, [Cache, {get, Key}, Timeout]}} ->
+        timeout
+    end.
 
 
 %% @spec put(cache(), key(), item()) -> ok
