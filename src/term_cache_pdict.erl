@@ -25,7 +25,7 @@
 % public API
 -export([start_link/1, stop/1]).
 -export([get/2, get/3, put/3, update/3]).
--export([flush/1]).
+-export([flush/1, get_info/1]).
 
 % gen_server callbacks
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2]).
@@ -41,7 +41,9 @@
     policy,
     ttl,        % milliseconds
     atimes,
-    take_fun
+    take_fun,
+    hits = 0,
+    misses = 0
 }).
 
 %% @type cache() = pid() | atom()
@@ -81,6 +83,13 @@ update(Cache, Key, Item) ->
 %% @spec flush(cache()) -> ok
 flush(Cache) ->
     ok = gen_server:cast(Cache, flush).
+
+
+%% @spec get_info(cache()) -> {ok, [info()]}
+%% @type info() = {size, integer()} | {free, integer() | {items, integer()} |
+%%                {hits, integer()} | {misses, integer()}
+get_info(Cache) ->
+    gen_server:call(Cache, get_info).
 
 
 %% @spec start_link(options()) -> {ok, pid()}
@@ -178,10 +187,11 @@ handle_cast(flush, #state{cache_size = Size} = State) ->
     },
     {noreply, NewState}.
 
-handle_call({get, Key}, _From, #state{atimes = ATimes, ttl = T} = State) ->
+handle_call({get, Key}, _From,
+    #state{atimes = ATimes, ttl = T, hits = Hits, misses = Misses} = State) ->
     case erlang:get({key, Key}) of
     undefined ->
-        {reply, not_found, State};
+        {reply, not_found, State#state{misses = Misses + 1}};
     {item, Item, ItemSize, ATime, Timer} ->
         cancel_timer(Key, Timer),
         NewATime = erlang:now(),
@@ -189,8 +199,24 @@ handle_call({get, Key}, _From, #state{atimes = ATimes, ttl = T} = State) ->
             NewATime, Key, gb_trees:delete(ATime, ATimes)),
         erlang:put(
             {key, Key}, {item, Item, ItemSize, NewATime, set_timer(Key, T)}),
-        {reply, {ok, Item}, State#state{atimes = ATimes2}}
+        {reply, {ok, Item}, State#state{atimes = ATimes2, hits = Hits + 1}}
     end;
+
+
+handle_call(get_info, _From, State) ->
+    #state{
+        atimes = ATimes,
+        free = Free,
+        cache_size = CacheSize,
+        hits = Hits,
+        misses = Misses
+    } = State,
+    Info = [
+        {size, CacheSize}, {free, Free}, {items, gb_trees:size(ATimes)},
+        {hits, Hits}, {misses, Misses}
+    ],
+    {reply, {ok, Info}, State};
+
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.

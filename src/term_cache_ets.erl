@@ -25,7 +25,7 @@
 % public API
 -export([start_link/1, stop/1]).
 -export([get/2, get/3, put/3, update/3]).
--export([flush/1]).
+-export([flush/1, get_info/1]).
 
 % gen_server callbacks
 -export([init/1, handle_call/3, handle_info/2, handle_cast/2]).
@@ -42,7 +42,9 @@
     ttl,        % milliseconds
     items,
     atimes,
-    take_fun
+    take_fun,
+    hits = 0,
+    misses = 0
 }).
 
 %% @type cache() = pid() | atom()
@@ -82,6 +84,13 @@ update(Cache, Key, Item) ->
 %% @spec flush(cache()) -> ok
 flush(Cache) ->
     ok = gen_server:cast(Cache, flush).
+
+
+%% @spec get_info(cache()) -> {ok, [info()]}
+%% @type info() = {size, integer()} | {free, integer() | {items, integer()} |
+%%                {hits, integer()} | {misses, integer()}
+get_info(Cache) ->
+    gen_server:call(Cache, get_info).
 
 
 %% @spec start_link(options()) -> {ok, pid()}
@@ -177,7 +186,9 @@ handle_cast(flush,
 
 
 handle_call({get, Key}, _From, State) ->
-    #state{items = Items, atimes = ATimes, ttl = Ttl} = State,
+    #state{
+        items = Items, atimes = ATimes, ttl = Ttl, hits = Hits, misses = Misses
+    } = State,
     case ets:lookup(Items, Key) of
     [{Key, {Item, ItemSize, ATime, Timer}}] ->
         cancel_timer(Key, Timer),
@@ -186,10 +197,26 @@ handle_call({get, Key}, _From, State) ->
         true = ets:insert(ATimes, {NewATime, Key}),
         NewTimer = set_timer(Key, Ttl),
         true = ets:insert(Items, {Key, {Item, ItemSize, NewATime, NewTimer}}),
-        {reply, {ok, Item}, State};
+        {reply, {ok, Item}, State#state{hits = Hits + 1}};
     [] ->
-        {reply, not_found, State}
+        {reply, not_found, State#state{misses = Misses + 1}}
     end;
+
+
+handle_call(get_info, _From, State) ->
+    #state{
+        atimes = ATimes,
+        free = Free,
+        cache_size = CacheSize,
+        hits = Hits,
+        misses = Misses
+    } = State,
+    Info = [
+        {size, CacheSize}, {free, Free}, {items, ets:info(ATimes, size)},
+        {hits, Hits}, {misses, Misses}
+    ],
+    {reply, {ok, Info}, State};
+
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
