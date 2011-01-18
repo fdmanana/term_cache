@@ -65,9 +65,25 @@ test_simple_lru(Module) ->
     ?assertEqual(not_found, Module:get(Cache, key8)),
     ?assertEqual(not_found, Module:get(Cache, key7)),
 
+    ?assertEqual(ok, Module:update(Cache, key9, <<"Ya">>)),
+    ?assertEqual({ok, <<"Ya">>}, Module:get(Cache, key9)),
+    ?assertEqual({ok, <<"777">>}, Module:get(Cache, key5)),
+    ?assertEqual(ok, Module:update(Cache, key999, <<"V">>)),
+    ?assertEqual(not_found, Module:get(Cache, key999)),
+    ?assertEqual({ok, <<"Ya">>}, Module:get(Cache, key9)),
+    ?assertEqual({ok, <<"777">>}, Module:get(Cache, key5)),
+
+    % updating a key's item doesn't update its timestamp
+    ?assertEqual(ok, Module:update(Cache, key9, <<"YY">>)),
+    ?assertEqual(ok, Module:put(Cache, key10, <<"54321">>)),
+    ?assertEqual({ok, <<"54321">>}, Module:get(Cache, key10)),
+    ?assertEqual({ok, <<"777">>}, Module:get(Cache, key5)),
+    ?assertEqual(not_found, Module:get(Cache, key9)),
+
     ?assertEqual(ok, Module:flush(Cache)),
     ?assertEqual(not_found, Module:get(Cache, key9)),
     ?assertEqual(not_found, Module:get(Cache, key5)),
+    ?assertEqual(not_found, Module:get(Cache, key10)),
 
     ?assertEqual(ok, Module:stop(Cache)).
 
@@ -148,6 +164,20 @@ test_simple_mru(Module) ->
     ?assertEqual(not_found, Module:get(Cache, key8)),
     ?assertEqual(not_found, Module:get(Cache, key7)),
     ?assertEqual(not_found, Module:get(Cache, key6)),
+
+    ?assertEqual(ok, Module:put(Cache, key22, <<"abc">>)),
+    ?assertEqual(ok, Module:put(Cache, key33, <<"abz">>)),
+    ?assertEqual(ok, Module:put(Cache, key44, <<"abx">>)),
+
+    ?assertEqual(ok, Module:update(Cache, key44, <<"ZZZ">>)),
+    ?assertEqual({ok, <<"ZZZ">>}, Module:get(Cache, key44)),
+
+    % updating a key's item doesn't update its timestamp
+    ?assertEqual(ok, Module:update(Cache, key22, <<"AAA">>)),
+    ?assertEqual(ok, Module:put(Cache, key55, <<":::">>)),
+    ?assertEqual({ok, <<":::">>}, Module:get(Cache, key55)),
+    ?assertEqual({ok, <<"AAA">>}, Module:get(Cache, key22)),
+    ?assertEqual(not_found, Module:get(Cache, key44)),
 
     ?assertEqual(ok, Module:stop(Cache)).
 

@@ -25,7 +25,7 @@
 
 % public API
 -export([start_link/1, stop/1]).
--export([get/2, get/3, put/3]).
+-export([get/2, get/3, put/3, update/3]).
 -export([flush/1]).
 
 % gen_server callbacks
@@ -70,6 +70,14 @@ get(Cache, Key, Timeout) ->
 %% @spec put(cache(), key(), item()) -> ok
 put(Cache, Key, Item) ->
     ok = gen_server:cast(Cache, {put, Key, Item, term_size(Item)}).
+
+
+%% @spec update(cache(), key(), item()) -> ok
+%% @doc Updates the value associated with a key without changing the key's
+%%      last access timestamp. This is a no-operation if the key is not already
+%%      in the cache or if there's not enough space to store the new item.
+update(Cache, Key, Item) ->
+    ok = gen_server:cast(Cache, {update, Key, Item, term_size(Item)}).
 
 
 %% @spec flush(cache()) -> ok
@@ -139,6 +147,28 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
         free = Free - ItemSize
     },
     {noreply, NewState};
+
+
+handle_cast({update, _Key, _NewItem, NewItemSize},
+    #state{cache_size = CacheSize} = State) when NewItemSize > CacheSize ->
+    {noreply, State};
+
+handle_cast({update, Key, NewItem, NewItemSize}, State) ->
+    #state{items = Items, free = Free} = State,
+    case dict:find(Key, Items) of
+    {ok, {_OldItem, OldItemSize, ATime, Timer}} ->
+        case NewItemSize > (Free + OldItemSize) of
+        true ->
+            {noreply, State};
+        false ->
+            Items2 = dict:store(
+                Key, {NewItem, NewItemSize, ATime, Timer}, Items),
+            Free2 = Free - OldItemSize + NewItemSize,
+            {noreply, State#state{items = Items2, free = Free2}}
+        end;
+    error ->
+        {noreply, State}
+    end;
 
 
 handle_cast(flush, #state{items = Items, cache_size = Size} = State) ->
