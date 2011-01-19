@@ -34,6 +34,7 @@
 -define(DEFAULT_POLICY, lru).
 -define(DEFAULT_SIZE, "128Kb").    % bytes
 -define(DEFAULT_TTL, 0).           % 0 means no TTL
+-define(GC_TIMEOUT, 5000).
 
 -record(state, {
     cache_size,
@@ -154,7 +155,7 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
         atimes = ATimes2,
         free = Free - ItemSize
     },
-    {noreply, NewState};
+    {noreply, NewState, ?GC_TIMEOUT};
 
 
 handle_cast({update, _Key, _NewItem, NewItemSize},
@@ -167,12 +168,12 @@ handle_cast({update, Key, NewItem, NewItemSize}, State) ->
     {value, {_OldItem, OldItemSize, ATime, Timer}} ->
         case NewItemSize > (Free + OldItemSize) of
         true ->
-            {noreply, State};
+            {noreply, State, ?GC_TIMEOUT};
         false ->
             Items2 = gb_trees:update(
                 Key, {NewItem, NewItemSize, ATime, Timer}, Items),
             Free2 = Free - OldItemSize + NewItemSize,
-            {noreply, State#state{items = Items2, free = Free2}}
+            {noreply, State#state{items = Items2, free = Free2}, ?GC_TIMEOUT}
         end;
     none ->
         {noreply, State}
@@ -189,7 +190,7 @@ handle_cast(flush, #state{items = Items, cache_size = Size} = State) ->
         atimes = gb_trees:empty(),
         free = Size
     },
-    {noreply, NewState}.
+    {noreply, NewState, ?GC_TIMEOUT}.
 
 
 handle_call({get, Key}, _From, State) ->
@@ -209,9 +210,9 @@ handle_call({get, Key}, _From, State) ->
             atimes = ATimes2,
             hits = Hits + 1
         },
-        {reply, {ok, Item}, NewState};
+        {reply, {ok, Item}, NewState, ?GC_TIMEOUT};
     none ->
-        {reply, not_found, State#state{misses = Misses + 1}}
+        {reply, not_found, State#state{misses = Misses + 1}, ?GC_TIMEOUT}
     end;
 
 
@@ -227,7 +228,7 @@ handle_call(get_info, _From, State) ->
         {size, CacheSize}, {free, Free}, {items, gb_trees:size(ATimes)},
         {hits, Hits}, {misses, Misses}
     ],
-    {reply, {ok, Info}, State};
+    {reply, {ok, Info}, State, ?GC_TIMEOUT};
 
 
 handle_call(stop, _From, State) ->
@@ -242,7 +243,11 @@ handle_info({expired, Key}, State) ->
         atimes = gb_trees:delete(ATime, ATimes),
         free = Free + ItemSize
     },
-    {noreply, NewState}.
+    {noreply, NewState, ?GC_TIMEOUT};
+
+handle_info(timeout, State) ->
+    true = erlang:garbage_collect(),
+    {noreply, State}.
 
 
 terminate(_Reason, _State) ->

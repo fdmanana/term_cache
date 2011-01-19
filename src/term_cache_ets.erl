@@ -34,6 +34,7 @@
 -define(DEFAULT_POLICY, lru).
 -define(DEFAULT_SIZE, "128Kb").    % bytes
 -define(DEFAULT_TTL, 0).           % 0 means no TTL
+-define(GC_TIMEOUT, 5000).
 
 -record(state, {
     cache_size,
@@ -149,7 +150,7 @@ handle_cast({put, Key, Item, ItemSize}, State) ->
     Timer = set_timer(Key, Ttl),
     true = ets:insert(ATimes, {Now, Key}),
     true = ets:insert(Items, {Key, {Item, ItemSize, Now, Timer}}),
-    {noreply, State#state{free = Free - ItemSize}};
+    {noreply, State#state{free = Free - ItemSize}, ?GC_TIMEOUT};
 
 
 handle_cast({update, _Key, _NewItem, NewItemSize},
@@ -166,7 +167,8 @@ handle_cast({update, Key, NewItem, NewItemSize}, State) ->
         false ->
             true = ets:insert(
                 Items, {Key, {NewItem, NewItemSize, ATime, Timer}}),
-            {noreply, State#state{free = Free - OldItemSize + NewItemSize}}
+            Free2 = Free - OldItemSize + NewItemSize,
+            {noreply, State#state{free = Free2}, ?GC_TIMEOUT}
         end;
     [] ->
         {noreply, State}
@@ -182,7 +184,7 @@ handle_cast(flush,
     ),
     true = ets:delete_all_objects(Items),
     true = ets:delete_all_objects(ATimes),
-    {noreply, State#state{free = Size}}.
+    {noreply, State#state{free = Size}, ?GC_TIMEOUT}.
 
 
 handle_call({get, Key}, _From, State) ->
@@ -197,9 +199,9 @@ handle_call({get, Key}, _From, State) ->
         true = ets:insert(ATimes, {NewATime, Key}),
         NewTimer = set_timer(Key, Ttl),
         true = ets:insert(Items, {Key, {Item, ItemSize, NewATime, NewTimer}}),
-        {reply, {ok, Item}, State#state{hits = Hits + 1}};
+        {reply, {ok, Item}, State#state{hits = Hits + 1}, ?GC_TIMEOUT};
     [] ->
-        {reply, not_found, State#state{misses = Misses + 1}}
+        {reply, not_found, State#state{misses = Misses + 1}, ?GC_TIMEOUT}
     end;
 
 
@@ -215,7 +217,7 @@ handle_call(get_info, _From, State) ->
         {size, CacheSize}, {free, Free}, {items, ets:info(ATimes, size)},
         {hits, Hits}, {misses, Misses}
     ],
-    {reply, {ok, Info}, State};
+    {reply, {ok, Info}, State, ?GC_TIMEOUT};
 
 
 handle_call(stop, _From, State) ->
@@ -227,7 +229,11 @@ handle_info({expired, Key}, State) ->
     [{Key, {_Item, ItemSize, ATime, _Timer}}] = ets:lookup(Items, Key),
     true = ets:delete(Items, Key),
     true = ets:delete(ATimes, ATime),
-    {noreply, State#state{free = Free + ItemSize}}.
+    {noreply, State#state{free = Free + ItemSize}, ?GC_TIMEOUT};
+
+handle_info(timeout, State) ->
+    true = erlang:garbage_collect(),
+    {noreply, State}.
 
 
 terminate(_Reason, #state{items = Items, atimes = ATimes}) ->
